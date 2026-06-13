@@ -44,10 +44,9 @@ def _df_parse_instruction(line):
   | let args  = trim(m["args"])
   | if (instr == "FROM"):
       do
-        let fm = capture(args, "^(?P<image>[^\\s]+)(?:\\s+AS\\s+(?P<alias>[^\\s]+))?(?:\\s+--platform=(?P<platform>[^\\s]+))?")
-        | {"instruction": "FROM", "image": fm["image"],
-           "alias":    if (is_none(fm["alias"])): None else: fm["alias"],
-           "platform": if (is_none(fm["platform"])): None else: fm["platform"]}
+        let fm       = capture(args, "^(?P<image>[^\\s]+)(?:\\s+AS\\s+(?P<alias>[^\\s]+))?")
+        | let alias_ = if (is_none(fm["alias"])): None else: fm["alias"]
+        | {"instruction": "FROM", "image": fm["image"], "alias": alias_}
       end
     elif (instr == "EXPOSE"):
       do
@@ -56,37 +55,39 @@ def _df_parse_instruction(line):
       end
     elif (instr == "ENV"):
       do
-        let em = capture(args, "^(?P<key>[A-Za-z_][A-Za-z0-9_]*)(?:=| )(?P<val>.*)")
-        | {"instruction": "ENV",
-           "key": if (is_none(em["key"])): args else: em["key"],
-           "value": if (is_none(em["val"])): "" else: trim(em["val"])}
+        let em  = capture(args, "^(?P<key>[A-Za-z_][A-Za-z0-9_]*)(?:=| )(?P<val>.*)")
+        | let k = if (is_none(em["key"])): args else: em["key"]
+        | let v = if (is_none(em["val"])): "" else: trim(em["val"])
+        | {"instruction": "ENV", "key": k, "value": v}
       end
     elif (instr == "ARG"):
       do
-        let am = capture(args, "^(?P<key>[^=]+)(?:=(?P<default>.*))?")
-        | {"instruction": "ARG",
-           "key": trim(am["key"]),
-           "default": if (is_none(am["default"])): None else: am["default"]}
+        let am      = capture(args, "^(?P<key>[^=]+)(?:=(?P<default>.*))?")
+        | let dflt  = if (is_none(am["default"])): None else: am["default"]
+        | {"instruction": "ARG", "key": trim(am["key"]), "default": dflt}
       end
     elif (instr == "LABEL"):
       do
-        let lm = capture(args, "^(?P<key>[^=]+)=(?P<val>.*)")
-        | {"instruction": "LABEL",
-           "key": if (is_none(lm["key"])): args else: trim(lm["key"]),
-           "value": if (is_none(lm["val"])): "" else: trim(lm["val"])}
+        let lm  = capture(args, "^(?P<key>[^=]+)=(?P<val>.*)")
+        | let k = if (is_none(lm["key"])): args else: trim(lm["key"])
+        | let v = if (is_none(lm["val"])): "" else: trim(lm["val"])
+        | {"instruction": "LABEL", "key": k, "value": v}
       end
     elif (instr == "COPY" || instr == "ADD"):
       do
         let parts = split(args, "\\s+") | filter(fn(p): len(p) > 0;)
-        | let n = len(parts)
-        | {"instruction": instr,
-           "sources": if (n > 1): slice(parts, 0, n - 1) else: [],
-           "dest":    if (n > 0): parts[n - 1] else: ""}
+        | let np  = len(parts)
+        | let src = if (np > 1): slice(parts, 0, np - 1) else: []
+        | let dst = if (np > 0): parts[np - 1] else: ""
+        | {"instruction": instr, "sources": src, "dest": dst}
       end
     elif (instr == "WORKDIR" || instr == "USER" || instr == "STOPSIGNAL"):
       {"instruction": instr, "value": args}
     elif (instr == "VOLUME"):
-      {"instruction": "VOLUME", "paths": split(args, "\\s+") | filter(fn(p): len(p) > 0;)}
+      do
+        let paths = split(args, "\\s+") | filter(fn(p): len(p) > 0;)
+        | {"instruction": "VOLUME", "paths": paths}
+      end
     else:
       {"instruction": instr, "args": args}
 end
@@ -96,14 +97,14 @@ end
 # Parses a Dockerfile string and returns an array of instruction dicts.
 def dockerfile_parse(input):
   let raw_lines = split(to_string(input), "\n")
-  | let lines = filter(raw_lines, fn(l):
+  | let lines   = filter(raw_lines, fn(l):
       let t = trim(l)
       | len(t) > 0 && not(starts_with(t, "#"))
     ;)
-  | let joined = _df_join_continuations(lines)
-  | filter(joined, fn(l): len(trim(l)) > 0;)
-  | map(fn(l): _df_parse_instruction(l);)
-  | filter(fn(i): _df_is_instruction(i["instruction"]);)
+  | let joined  = _df_join_continuations(lines)
+  | let nonblank = filter(joined, fn(l): len(trim(l)) > 0;)
+  | let parsed  = map(nonblank, fn(l): _df_parse_instruction(l);)
+  | filter(parsed, fn(i): _df_is_instruction(i["instruction"]);)
 end
 
 # Returns all FROM instructions (useful for multi-stage builds).
