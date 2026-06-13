@@ -30,6 +30,7 @@ mq -I raw 'import "github.com/harehare/dockerfile.mq" | dockerfile::dockerfile_p
 | Function | Description |
 |---|---|
 | `dockerfile_parse(input)` | Parse a Dockerfile and return an array of instruction dicts |
+| `dockerfile_stringify(instructions)` | Serialize an array of instruction dicts back to a Dockerfile string |
 | `dockerfile_stages(input)` | Return all `FROM` instructions (multi-stage) |
 | `dockerfile_ports(input)` | Return all exposed ports as a flat string array |
 | `dockerfile_env(input)` | Return all `ENV` instructions as a dict |
@@ -74,6 +75,12 @@ mq -I raw 'import "dockerfile" | dockerfile::dockerfile_parse(.) | filter(fn(i):
 # Check base image
 mq -I raw 'import "dockerfile" | dockerfile::dockerfile_stages(.) | first() | ."image"' Dockerfile
 # => "node:20-alpine"
+
+# Round-trip: parse then stringify back to Dockerfile text
+mq -I raw 'import "dockerfile" | dockerfile::dockerfile_stringify(dockerfile::dockerfile_parse(.))' Dockerfile
+
+# Modify an instruction and serialize (e.g. bump the base image tag)
+mq -I raw 'import "dockerfile" | let instrs = dockerfile::dockerfile_parse(.) | dockerfile::dockerfile_stringify(map(instrs, fn(i): if (i["instruction"] == "FROM"): set(i, "image", "node:22-alpine") else: i;))' Dockerfile
 ```
 
 ## License
