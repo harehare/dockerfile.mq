@@ -1,0 +1,124 @@
+# Dockerfile parser implemented in mq
+# https://docs.docker.com/reference/dockerfile/
+
+# ─── internal ─────────────────────────────────────────────────────────────────
+
+def _df_instructions():
+  ["FROM", "RUN", "CMD", "LABEL", "EXPOSE", "ENV", "ADD", "COPY",
+   "ENTRYPOINT", "VOLUME", "USER", "WORKDIR", "ARG", "ONBUILD",
+   "STOPSIGNAL", "HEALTHCHECK", "SHELL"]
+end
+
+def _df_is_instruction(word):
+  any(_df_instructions(), fn(i): i == upcase(word);)
+end
+
+def _df_join_continuations(lines):
+  var result = []
+  | var buf = ""
+  | var i = 0
+  | let n = len(lines)
+  | let _ = while (i < n):
+      let l = lines[i]
+      | if (ends_with(trim(l), "\\")):
+          do
+            buf = buf + trim(slice(l, 0, len(l) - 1)) + " "
+            | i += 1
+            | buf
+          end
+        else:
+          do
+            result += [buf + l]
+            | buf = ""
+            | i += 1
+            | result
+          end
+    end
+  | if (len(buf) > 0): result + [buf] else: result
+end
+
+def _df_parse_instruction(line):
+  let l = trim(line)
+  | let m = capture(l, "^(?P<instr>[A-Za-z]+)\\s*(?P<args>.*)")
+  | let instr = upcase(m["instr"])
+  | let args  = trim(m["args"])
+  | if (instr == "FROM"):
+      do
+        let fm = capture(args, "^(?P<image>[^\\s]+)(?:\\s+AS\\s+(?P<alias>[^\\s]+))?(?:\\s+--platform=(?P<platform>[^\\s]+))?")
+        | {"instruction": "FROM", "image": fm["image"],
+           "alias":    if (is_none(fm["alias"])): None else: fm["alias"],
+           "platform": if (is_none(fm["platform"])): None else: fm["platform"]}
+      end
+    elif (instr == "EXPOSE"):
+      do
+        let ports = split(args, "\\s+") | filter(fn(p): len(p) > 0;)
+        | {"instruction": "EXPOSE", "ports": ports}
+      end
+    elif (instr == "ENV"):
+      do
+        let em = capture(args, "^(?P<key>[A-Za-z_][A-Za-z0-9_]*)(?:=| )(?P<val>.*)")
+        | {"instruction": "ENV",
+           "key": if (is_none(em["key"])): args else: em["key"],
+           "value": if (is_none(em["val"])): "" else: trim(em["val"])}
+      end
+    elif (instr == "ARG"):
+      do
+        let am = capture(args, "^(?P<key>[^=]+)(?:=(?P<default>.*))?")
+        | {"instruction": "ARG",
+           "key": trim(am["key"]),
+           "default": if (is_none(am["default"])): None else: am["default"]}
+      end
+    elif (instr == "LABEL"):
+      do
+        let lm = capture(args, "^(?P<key>[^=]+)=(?P<val>.*)")
+        | {"instruction": "LABEL",
+           "key": if (is_none(lm["key"])): args else: trim(lm["key"]),
+           "value": if (is_none(lm["val"])): "" else: trim(lm["val"])}
+      end
+    elif (instr == "COPY" || instr == "ADD"):
+      do
+        let parts = split(args, "\\s+") | filter(fn(p): len(p) > 0;)
+        | let n = len(parts)
+        | {"instruction": instr,
+           "sources": if (n > 1): slice(parts, 0, n - 1) else: [],
+           "dest":    if (n > 0): parts[n - 1] else: ""}
+      end
+    elif (instr == "WORKDIR" || instr == "USER" || instr == "STOPSIGNAL"):
+      {"instruction": instr, "value": args}
+    elif (instr == "VOLUME"):
+      {"instruction": "VOLUME", "paths": split(args, "\\s+") | filter(fn(p): len(p) > 0;)}
+    else:
+      {"instruction": instr, "args": args}
+end
+
+# ─── public API ───────────────────────────────────────────────────────────────
+
+# Parses a Dockerfile string and returns an array of instruction dicts.
+def dockerfile_parse(input):
+  let raw_lines = split(to_string(input), "\n")
+  | let lines = filter(raw_lines, fn(l):
+      let t = trim(l)
+      | len(t) > 0 && not(starts_with(t, "#"))
+    ;)
+  | let joined = _df_join_continuations(lines)
+  | filter(joined, fn(l): len(trim(l)) > 0;)
+  | map(fn(l): _df_parse_instruction(l);)
+  | filter(fn(i): _df_is_instruction(i["instruction"]);)
+end
+
+# Returns all FROM instructions (useful for multi-stage builds).
+def dockerfile_stages(input):
+  filter(dockerfile_parse(input), fn(i): i["instruction"] == "FROM";)
+end
+
+# Returns all exposed ports as a flat array.
+def dockerfile_ports(input):
+  let expose_instrs = filter(dockerfile_parse(input), fn(i): i["instruction"] == "EXPOSE";)
+  | fold(expose_instrs, [], fn(acc, i): acc + i["ports"];)
+end
+
+# Returns all ENV instructions as a dict.
+def dockerfile_env(input):
+  let env_instrs = filter(dockerfile_parse(input), fn(i): i["instruction"] == "ENV";)
+  | fold(env_instrs, dict(), fn(acc, i): set(acc, i["key"], i["value"]);)
+end
