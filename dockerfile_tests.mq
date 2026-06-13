@@ -134,3 +134,56 @@ def test_realistic_dockerfile():
   | let envs = dockerfile_env(input)
   | assert_eq(envs["NODE_ENV"], "production")
 end
+
+# -- dockerfile_stringify --
+
+def test_restore_from_simple():
+  let result = dockerfile_stringify(dockerfile_parse("FROM node:20-alpine"))
+  | assert_eq(result, "FROM node:20-alpine")
+end
+
+def test_restore_from_with_alias():
+  let result = dockerfile_stringify(dockerfile_parse("FROM node:20-alpine AS builder"))
+  | assert_eq(result, "FROM node:20-alpine AS builder")
+end
+
+def test_restore_expose():
+  let result = dockerfile_stringify(dockerfile_parse("EXPOSE 80 443"))
+  | assert_eq(result, "EXPOSE 80 443")
+end
+
+def test_restore_env():
+  let result = dockerfile_stringify(dockerfile_parse("ENV NODE_ENV=production"))
+  | assert_eq(result, "ENV NODE_ENV=production")
+end
+
+def test_restore_arg_without_default():
+  let result = dockerfile_stringify(dockerfile_parse("ARG VERSION"))
+  | assert_eq(result, "ARG VERSION")
+end
+
+def test_restore_arg_with_default():
+  let result = dockerfile_stringify(dockerfile_parse("ARG PORT=3000"))
+  | assert_eq(result, "ARG PORT=3000")
+end
+
+def test_restore_workdir():
+  let result = dockerfile_stringify(dockerfile_parse("WORKDIR /app"))
+  | assert_eq(result, "WORKDIR /app")
+end
+
+def test_restore_copy():
+  let result = dockerfile_stringify(dockerfile_parse("COPY src/ /app/"))
+  | assert_eq(result, "COPY src/ /app/")
+end
+
+def test_restore_run():
+  let result = dockerfile_stringify(dockerfile_parse("RUN npm install"))
+  | assert_eq(result, "RUN npm install")
+end
+
+def test_restore_roundtrip():
+  let input = "FROM node:20-alpine AS builder\nWORKDIR /app\nARG VERSION=1.0\nENV NODE_ENV=production\nCOPY package.json ./\nRUN npm ci\nEXPOSE 3000"
+  | let restored = dockerfile_stringify(dockerfile_parse(input))
+  | assert_eq(restored, input)
+end

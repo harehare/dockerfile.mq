@@ -92,6 +92,38 @@ def _df_parse_instruction(line):
       {"instruction": instr, "args": args}
 end
 
+def _df_join(parts, sep):
+  fold(parts, "", fn(acc, p): if (len(acc) == 0): p else: acc + sep + p;)
+end
+
+def _df_instruction_to_string(instr):
+  let i = instr["instruction"]
+  | if (i == "FROM"):
+      do
+        let alias_part = if (is_none(instr["alias"])): "" else: " AS " + instr["alias"]
+        | "FROM " + instr["image"] + alias_part
+      end
+    elif (i == "EXPOSE"):
+      "EXPOSE " + _df_join(instr["ports"], " ")
+    elif (i == "ENV"):
+      "ENV " + instr["key"] + "=" + instr["value"]
+    elif (i == "ARG"):
+      do
+        let default_part = if (is_none(instr["default"])): "" else: "=" + instr["default"]
+        | "ARG " + instr["key"] + default_part
+      end
+    elif (i == "LABEL"):
+      "LABEL " + instr["key"] + "=" + instr["value"]
+    elif (i == "COPY" || i == "ADD"):
+      i + " " + _df_join(instr["sources"], " ") + " " + instr["dest"]
+    elif (i == "WORKDIR" || i == "USER" || i == "STOPSIGNAL"):
+      i + " " + instr["value"]
+    elif (i == "VOLUME"):
+      "VOLUME " + _df_join(instr["paths"], " ")
+    else:
+      i + " " + instr["args"]
+end
+
 # ─── public API ───────────────────────────────────────────────────────────────
 
 # Parses a Dockerfile string and returns an array of instruction dicts.
@@ -122,4 +154,9 @@ end
 def dockerfile_env(input):
   let env_instrs = filter(dockerfile_parse(input), fn(i): i["instruction"] == "ENV";)
   | fold(env_instrs, dict(), fn(acc, i): set(acc, i["key"], i["value"]);)
+end
+
+# Converts a list of parsed instruction dicts back to a Dockerfile string.
+def dockerfile_stringify(instructions):
+  _df_join(map(instructions, fn(i): _df_instruction_to_string(i);), "\n")
 end
