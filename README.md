@@ -76,10 +76,6 @@ mq -I raw 'import "dockerfile" | dockerfile::dockerfile_stages(.) | first() | ."
 # => "node:20-alpine"
 ```
 
-## Compatibility
-
-Requires [mq](https://github.com/harehare/mq) v0.5 or later.
-
 ## License
 
 MIT
