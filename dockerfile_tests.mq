@@ -1,0 +1,136 @@
+include "test"
+| include "dockerfile"
+|
+
+# -- FROM --
+
+def test_from_simple():
+  let result = dockerfile_parse("FROM node:20-alpine")
+  | assert_len(result, 1)
+  | assert_eq(result[0]["instruction"], "FROM")
+  | assert_eq(result[0]["image"], "node:20-alpine")
+end
+
+def test_from_with_alias():
+  let result = dockerfile_parse("FROM node:20-alpine AS builder")
+  | assert_eq(result[0]["alias"], "builder")
+end
+
+def test_from_without_alias():
+  let result = dockerfile_parse("FROM ubuntu:22.04")
+  | assert_none(result[0]["alias"])
+end
+
+def test_from_multistage():
+  let input = "FROM node:20 AS build\nFROM nginx:alpine AS serve"
+  | let result = dockerfile_stages(input)
+  | assert_len(result, 2)
+  | assert_eq(result[0]["alias"], "build")
+  | assert_eq(result[1]["alias"], "serve")
+end
+
+# -- EXPOSE --
+
+def test_expose_single_port():
+  let result = dockerfile_parse("EXPOSE 3000")
+  | let expose = first(filter(result, fn(i): i["instruction"] == "EXPOSE";))
+  | assert_contains(expose["ports"], "3000")
+end
+
+def test_expose_multiple_ports():
+  let result = dockerfile_parse("EXPOSE 80 443 8080")
+  | let ports = dockerfile_ports("EXPOSE 80 443 8080")
+  | assert_len(ports, 3)
+end
+
+def test_expose_helper():
+  let input = "FROM alpine\nEXPOSE 8080\nEXPOSE 9090"
+  | let ports = dockerfile_ports(input)
+  | assert_contains(ports, "8080")
+  | assert_contains(ports, "9090")
+end
+
+# -- ENV --
+
+def test_env_key_value():
+  let result = dockerfile_parse("ENV NODE_ENV=production")
+  | let env = first(filter(result, fn(i): i["instruction"] == "ENV";))
+  | assert_eq(env["key"], "NODE_ENV")
+  | assert_eq(env["value"], "production")
+end
+
+def test_env_helper_returns_dict():
+  let input = "FROM alpine\nENV FOO=bar\nENV BAZ=qux"
+  | let envs = dockerfile_env(input)
+  | assert_eq(envs["FOO"], "bar")
+  | assert_eq(envs["BAZ"], "qux")
+end
+
+# -- WORKDIR --
+
+def test_workdir():
+  let result = dockerfile_parse("WORKDIR /app")
+  | let wd = first(filter(result, fn(i): i["instruction"] == "WORKDIR";))
+  | assert_eq(wd["value"], "/app")
+end
+
+# -- ARG --
+
+def test_arg_without_default():
+  let result = dockerfile_parse("ARG VERSION")
+  | let arg = first(filter(result, fn(i): i["instruction"] == "ARG";))
+  | assert_eq(arg["key"], "VERSION")
+  | assert_none(arg["default"])
+end
+
+def test_arg_with_default():
+  let result = dockerfile_parse("ARG PORT=3000")
+  | let arg = first(filter(result, fn(i): i["instruction"] == "ARG";))
+  | assert_eq(arg["key"], "PORT")
+  | assert_eq(arg["default"], "3000")
+end
+
+# -- RUN --
+
+def test_run_command():
+  let result = dockerfile_parse("RUN npm install")
+  | let run = first(filter(result, fn(i): i["instruction"] == "RUN";))
+  | assert_eq(run["args"], "npm install")
+end
+
+# -- COPY --
+
+def test_copy_source_dest():
+  let result = dockerfile_parse("COPY src/ /app/")
+  | let copy = first(filter(result, fn(i): i["instruction"] == "COPY";))
+  | assert_eq(copy["dest"], "/app/")
+end
+
+# -- comment and blank line skipping --
+
+def test_skips_comments():
+  let input = "# This is a comment\nFROM alpine\n# Another comment\nRUN echo hello"
+  | let result = dockerfile_parse(input)
+  | assert_len(result, 2)
+  | assert_eq(result[0]["instruction"], "FROM")
+  | assert_eq(result[1]["instruction"], "RUN")
+end
+
+def test_skips_blank_lines():
+  let input = "FROM alpine\n\nRUN echo hello\n\nEXPOSE 80"
+  | let result = dockerfile_parse(input)
+  | assert_len(result, 3)
+end
+
+# -- realistic Dockerfile --
+
+def test_realistic_dockerfile():
+  let input = "FROM node:20-alpine AS builder\nWORKDIR /app\nCOPY package.json ./\nRUN npm ci\nCOPY . .\nRUN npm run build\n\nFROM node:20-alpine\nWORKDIR /app\nENV NODE_ENV=production\nCOPY --from=builder /app/dist ./dist\nEXPOSE 3000\nCMD [\"node\", \"dist/index.js\"]"
+  | let stages = dockerfile_stages(input)
+  | assert_len(stages, 2)
+  | assert_eq(stages[0]["alias"], "builder")
+  | let ports = dockerfile_ports(input)
+  | assert_contains(ports, "3000")
+  | let envs = dockerfile_env(input)
+  | assert_eq(envs["NODE_ENV"], "production")
+end
